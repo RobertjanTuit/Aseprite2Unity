@@ -1,5 +1,5 @@
 ﻿using System;
- using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -22,13 +22,17 @@ namespace Aseprite2Unity.Editor
         public float m_FrameRate = 60.0f;
         public GameObject m_InstantiatedPrefab;
         public string m_SortingLayerName;
+        public string m_GroupToImport;
+        public string m_TagsAlsoImport;
+        public string m_MirrorToFiles;
+        public Boolean m_Untagged = false;
         public int m_SortingOrder;
         public AnimatorCullingMode m_AnimatorCullingMode = AnimatorCullingMode.AlwaysAnimate;
         public RuntimeAnimatorController m_AnimatorController;
 
         private readonly List<AseLayerChunk> m_Layers = new List<AseLayerChunk>();
         private readonly List<AseFrame> m_Frames = new List<AseFrame>();
-        private readonly List<Sprite> m_Sprites = new List<Sprite>();
+        // private readonly List<Sprite> m_Sprites = new List<Sprite>();
         private readonly List<AnimationClip> m_Clips = new List<AnimationClip>();
 
         private GameObject m_GameObject;
@@ -55,11 +59,26 @@ namespace Aseprite2Unity.Editor
 #if UNITY_2018_3_OR_NEWER
             m_Context = ctx;
 
+            var mirrorFiles = (m_MirrorToFiles ?? "").Split(',').Where(s => s.Trim() != "");
+            if (mirrorFiles.Count() > 0)
+            {
+                foreach (var mirrorFile in mirrorFiles)
+                {
+                    var targetPath = Path.Join(Path.GetDirectoryName(ctx.assetPath), mirrorFile + Path.GetExtension(ctx.assetPath));
+                    File.Copy(ctx.assetPath, targetPath, true);
+                    //Debug.Log(ctx.assetPath + " --> " + targetPath);
+                }
+            }
+
             using (var reader = new AseReader(ctx.assetPath))
             {
-                m_AseFile = new AseFile(reader);
+                m_AseFile = new AseFile(reader, m_GroupToImport, m_TagsAlsoImport);
+                m_Layers.AddRange(m_AseFile.Layers);
+                m_AseFrameTagsChunk = m_AseFile.TagsChunk;
                 m_AseFile.VisitContents(this);
             }
+
+            var m_GameObject = new GameObject();
 #else
             string msg = string.Format("Aesprite2Unity requires Unity 2018.3 or later. You are using {0}", Application.unityVersion);
             m_Errors.Add(msg);
@@ -114,7 +133,7 @@ namespace Aseprite2Unity.Editor
                 renderer.sortingOrder = m_SortingOrder;
             }
 
-            renderer.sprite = m_Sprites[0];
+            renderer.sprite = m_Frames.Select(f => f.Sprite).Where(f => f != null).FirstOrDefault();
 
             // Add an animator if needed
             var animator = m_GameObject.GetComponent<Animator>();
@@ -130,7 +149,6 @@ namespace Aseprite2Unity.Editor
             m_Palette.Clear();
             m_Layers.Clear();
             m_Frames.Clear();
-            m_Sprites.Clear();
             m_Clips.Clear();
             m_AseFrameTagsChunk = null;
             m_UniqueNameifier.Clear();
@@ -164,16 +182,16 @@ namespace Aseprite2Unity.Editor
             // Make a sprite out of the texture
             var pivot = m_Pivot ?? new Vector2(0.5f, 0.5f);
             var sprite = Sprite.Create(m_Texture2D, new Rect(0, 0, m_Texture2D.width, m_Texture2D.height), pivot, m_PixelsPerUnit);
-            sprite.name = string.Format("{0}.Sprites._{1}", Path.GetFileNameWithoutExtension(assetPath), m_Sprites.Count);
-            m_Sprites.Add(sprite);
+            sprite.name = string.Format("{0}.Sprites._{1}", Path.GetFileNameWithoutExtension(assetPath), frame.Index);
+            frame.Sprite = sprite;
             m_Context.AddObjectToAsset(sprite.name, sprite);
         }
 
         public void VisitCelChunk(AseCelChunk cel)
         {
             // Is our layer visible?
-            var layer = m_Layers[cel.LayerIndex];
-            if (!layer.IsVisible)
+            var layer = m_Layers.Where(l => l.Index == cel.LayerIndex).FirstOrDefault();
+            if (layer == null || !layer.IsVisible)
             {
                 return;
             }
@@ -216,12 +234,12 @@ namespace Aseprite2Unity.Editor
 
         public void VisitFrameTagsChunk(AseFrameTagsChunk frameTags)
         {
-            m_AseFrameTagsChunk = frameTags;
+            // m_AseFrameTagsChunk = frameTags;
         }
 
         public void VisitLayerChunk(AseLayerChunk layer)
         {
-            m_Layers.Add(layer);
+            // m_Layers.Add(layer);
         }
 
         public void VisitPaletteChunk(AsePaletteChunk palette)
@@ -408,6 +426,13 @@ namespace Aseprite2Unity.Editor
                 foreach (var entry in m_AseFrameTagsChunk.Entries)
                 {
                     var animIndices = Enumerable.Range(entry.FromFrame, entry.ToFrame - entry.FromFrame + 1).ToList();
+                    if (entry.LoopAnimationDirection == LoopAnimationDirection.PingPong)
+                    {
+                        var backAnimIndices = animIndices.ToList();
+                        backAnimIndices.RemoveAt(0);
+                        backAnimIndices.Reverse();
+                        animIndices.AddRange(backAnimIndices);
+                    }
                     string animName = string.Format("{0}.Animations.{1}", Path.GetFileNameWithoutExtension(assetPath), entry.Name);
                     MakeAnimationClip(animName, !entry.IsOneShot, animIndices);
 
@@ -417,8 +442,11 @@ namespace Aseprite2Unity.Editor
             }
 
             // Make an animation out of any left over (untagged) frames
-            string untaggedName = string.Format("{0}.Animations.Untagged", Path.GetFileNameWithoutExtension(assetPath));
-            MakeAnimationClip(untaggedName, true, frameIndices);
+            if (m_Untagged)
+            {
+                string untaggedName = string.Format("{0}.Animations.Untagged", Path.GetFileNameWithoutExtension(assetPath));
+                MakeAnimationClip(untaggedName, true, frameIndices);
+            }
         }
 
         private void MakeAnimationClip(string name, bool isLooping, List<int> frameIndices)
@@ -446,34 +474,37 @@ namespace Aseprite2Unity.Editor
 
                 var key = new ObjectReferenceKeyframe();
                 key.time = time;
-                key.value = m_Sprites[frameIndex];
+                key.value = m_Frames.Where(f => f.Index == frameIndex).Select(f => f.Sprite).FirstOrDefault();
                 keys[i] = key;
 
                 // Are there any animation events to add for this frame?
-                var frame = m_Frames[frameIndex];
-                foreach (var celData in frame.Chunks.OfType<AseCelChunk>())
+                var frame = m_Frames.Where(f => f.Index == frameIndex).FirstOrDefault();
+                if (frame != null)
                 {
-                    // Cel data on invisible layers is ignored
-                    if (m_Layers[celData.LayerIndex].IsVisible && !string.IsNullOrEmpty(celData.UserDataText))
+                    foreach (var celData in frame.Chunks.OfType<AseCelChunk>())
                     {
-                        // Is the user data of "event:SomeName" format?
-                        const string eventTag = "event:";
-                        if (celData.UserDataText.StartsWith(eventTag, StringComparison.OrdinalIgnoreCase))
+                        // Cel data on invisible layers is ignored
+                        if (m_Layers.Where(l => l.Index == celData.LayerIndex).FirstOrDefault()?.IsVisible == true && !string.IsNullOrEmpty(celData.UserDataText))
                         {
-                            string eventName = celData.UserDataText.Substring(eventTag.Length);
-                            if (!string.IsNullOrEmpty(eventName))
+                            // Is the user data of "event:SomeName" format?
+                            const string eventTag = "event:";
+                            if (celData.UserDataText.StartsWith(eventTag, StringComparison.OrdinalIgnoreCase))
                             {
-                                var animationEvent = new AnimationEvent();
-                                animationEvent.functionName = eventName;
-                                animationEvent.time = time;
-                                animationEvents.Add(animationEvent);
+                                string eventName = celData.UserDataText.Substring(eventTag.Length);
+                                if (!string.IsNullOrEmpty(eventName))
+                                {
+                                    var animationEvent = new AnimationEvent();
+                                    animationEvent.functionName = eventName;
+                                    animationEvent.time = time;
+                                    animationEvents.Add(animationEvent);
+                                }
                             }
                         }
                     }
-                }
 
-                // Advance time for next frame
-                time += m_Frames[frameIndex].FrameDurationMs / 1000.0f;
+                    // Advance time for next frame
+                    time += frame.FrameDurationMs / 1000.0f;
+                }
             }
 
             AnimationUtility.SetObjectReferenceCurve(clip, binding, keys);

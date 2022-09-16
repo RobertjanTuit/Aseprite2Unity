@@ -2,6 +2,11 @@
 {
     public class AseLayerChunk : AseChunk
     {
+        internal int Index;
+        
+        internal AseLayerChunk Group;
+        internal AseLayerChunk Parent;
+
         public override ChunkType ChunkType => ChunkType.Layer;
 
         public LayerChunkFlags Flags { get; }

@@ -56,6 +56,18 @@ namespace Aseprite2Unity.Editor
                 EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AsepriteImporter.m_SortingOrder)),
                     new GUIContent("Order in Layer", "SpriteRenderer's order within a sorting layer. If Instantiated Prefab has a Sprite Renderer then this will not be used."));
 
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AsepriteImporter.m_GroupToImport)),
+                    new GUIContent("GroupName to import", "Name of the group to import."));
+
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AsepriteImporter.m_TagsAlsoImport)),
+                    new GUIContent("Tags to also import", "Tags names to also import."));
+
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AsepriteImporter.m_MirrorToFiles)),
+                    new GUIContent("Mirror to Files", "Which files to copy to on file changes."));
+
+                EditorGUILayout.PropertyField(serializedObject.FindProperty(nameof(AsepriteImporter.m_Untagged)),
+                    new GUIContent("Generate untagged animations", "Generate untagged animations."));
+
                 EditorGUI.indentLevel--;
             }
 

@@ -6,6 +6,8 @@ namespace Aseprite2Unity.Editor
 {
     public class AseFrame
     {
+        public int Index { get; }
+
         public AseFile AseFile { get; }
 
         public uint NumBytesInFrame { get; }
@@ -14,9 +16,11 @@ namespace Aseprite2Unity.Editor
         public ushort FrameDurationMs { get; }
 
         public List<AseChunk> Chunks { get; }
+        public UnityEngine.Sprite Sprite { get; internal set; }
 
-        public AseFrame(AseFile file, AseReader reader)
+        public AseFrame(AseFile file, AseReader reader, int index)
         {
+            Index = index;
             AseFile = file;
 
             NumBytesInFrame = reader.ReadDWORD();
@@ -40,6 +44,14 @@ namespace Aseprite2Unity.Editor
             {
                 Chunks[i] = ReadChunk(reader);
             }
+            
+            /*
+            Chunks = Chunks
+                        .Where((c => c.ChunkType != ChunkType.Layer || (c as AseLayerChunk).Flags.HasFlag(LayerChunkFlags.Visible)))
+                        .ToList();
+
+            NumChunks = (uint)Chunks.Count();
+            */
 
             Debug.Assert(MagicNumber == 0xF1FA);
         }
